@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enigma Machine Rotor Encryption Simulator</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #1a1a2e; }
+  .rotor-display { font-family: 'Courier New', monospace; }
+  .key-light { transition: background 0.1s; }
+</style>
+</head>
+<body class="min-h-screen text-gray-100 p-4">
+<div class="max-w-4xl mx-auto">
+  <h1 class="text-3xl font-bold text-center text-yellow-400 mb-2">Enigma Machine Simulator</h1>
+  <p class="text-center text-gray-400 mb-6 text-sm">Historical WWII Enigma rotor encryption</p>
+
+  <!-- Rotor Config -->
+  <div class="bg-gray-800 rounded-xl p-4 mb-4">
+    <h2 class="text-lg font-semibold text-yellow-300 mb-3">Rotor Configuration</h2>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div id="rotor-slots"></div>
+    </div>
+    <!-- Reflector -->
+    <div class="mt-4 flex flex-wrap gap-4 items-center">
+      <label class="text-sm text-gray-300">Reflector:
+        <select id="reflector" class="ml-2 bg-gray-700 text-white rounded px-2 py-1 text-sm">
+          <option value="UKW-B">UKW-B</option>
+          <option value="UKW-A">UKW-A</option>
+        </select>
+      </label>
+      <button id="reset-btn" class="bg-red-700 hover:bg-red-600 text-white px-3 py-1 rounded text-sm">Reset Positions</button>
+    </div>
+  </div>
+
+  <!-- Plugboard -->
+  <div class="bg-gray-800 rounded-xl p-4 mb-4">
+    <h2 class="text-lg font-semibold text-yellow-300 mb-2">Plugboard (Steckerbrett) — up to 10 pairs</h2>
+    <p class="text-xs text-gray-400 mb-2">Enter pairs like: AB CD EF (space-separated letter pairs)</p>
+    <input id="plugboard-input" type="text" maxlength="60"
+      class="w-full bg-gray-700 text-white rounded px-3 py-2 font-mono text-sm"
+      placeholder="e.g. AZ BX CD EF">
+    <div id="plugboard-status" class="text-xs mt-1 text-green-400"></div>
+  </div>
+
+  <!-- Rotor Display -->
+  <div class="bg-gray-800 rounded-xl p-4 mb-4">
+    <h2 class="text-lg font-semibold text-yellow-300 mb-2">Current Rotor Positions</h2>
+    <div id="position-display" class="flex gap-6 rotor-display text-2xl font-bold text-yellow-400"></div>
+  </div>
+
+  <!-- Input/Output -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div class="bg-gray-800 rounded-xl p-4">
+      <label for="plaintext" class="block text-sm font-semibold text-green-400 mb-2">Plaintext Input</label>
+      <textarea id="plaintext" rows="6"
+        class="w-full bg-gray-900 text-green-300 rounded px-3 py-2 font-mono text-sm resize-none"
+        placeholder="Type here to encrypt..."></textarea>
+    </div>
+    <div class="bg-gray-800 rounded-xl p-4">
+      <label for="ciphertext" class="block text-sm font-semibold text-red-400 mb-2">Ciphertext Output</label>
+      <textarea id="ciphertext" rows="6" readonly
+        class="w-full bg-gray-900 text-red-300 rounded px-3 py-2 font-mono text-sm resize-none"
+        placeholder="Encrypted output appears here..."></textarea>
+    </div>
+  </div>
+  <p class="text-center text-xs text-gray-500 mt-3">Note: Enigma is symmetric — encrypting ciphertext with same settings decrypts it</p>
+</div>
+
+<script>
+// Historical Enigma wiring
+const ROTORS = {
+  'I':   { wiring: 'EKMFLGDQVZNTOWYHXUSPAIBRCJ', notch: 'Q' },
+  'II':  { wiring: 'AJDKSIRUXBLHWTMCQGZNPYFVOE', notch: 'E' },
+  'III': { wiring: 'BDFHJLCPRTXVZNYEIWGAKMUSQO', notch: 'V' },
+  'IV':  { wiring: 'ESOVPZJAYQUIRHXLNFTGKDCMWB', notch: 'J' },
+  'V':   { wiring: 'VZBRGITYUPSDNHLXAWMJQOFECK', notch: 'Z' }
+};
+const REFLECTORS = {
+  'UKW-A': 'EJMZALYXVBWFCRQUONTSPIKHGD',
+  'UKW-B': 'YRUHQSLDPXNGOKMIEBFZCWVJAT'
+};
+
+const A = 65;
+function charToIdx(c) { return c.toUpperCase().charCodeAt(0) - A; }
+function idxToChar(i) { return String.fromCharCode(((i % 26 + 26) % 26) + A); }
+
+// Build rotor slots HTML
+const rotorSlotContainer = document.getElementById('rotor-slots');
+rotorSlotContainer.className = 'col-span-3 grid grid-cols-3 gap-4';
+
+const rotorNames = ['I','II','III','IV','V'];
+for (let r = 0; r < 3; r++) {
+  const div = document.createElement('div');
+  div.className = 'bg-gray-700 rounded-lg p-3';
+  div.innerHTML = `
+    <div class="text-sm font-bold text-yellow-300 mb-2">Rotor ${r+1} (${r===0?'Left':r===1?'Middle':'Right'})</div>
+    <label class="block text-xs text-gray-300 mb-1">Type:
+      <select id="rotor-type-${r}" class="ml-1 bg-gray-600 text-white rounded px-1 py-0.5 text-xs">
+        ${rotorNames.map((n,i)=>`<option value="${n}" ${i===r?'selected':''}>${n}</option>`).join('')}
+      </select>
+    </label>
+    <label class="block text-xs text-gray-300 mb-1">Ring (1-26):
+      <input id="ring-${r}" type="number" min="1" max="26" value="1"
+        class="ml-1 bg-gray-600 text-white rounded px-1 py-0.5 w-12 text-xs">
+    </label>
+    <label class="block text-xs text-gray-300">Start (A-Z):
+      <input id="start-${r}" type="text" maxlength="1" value="${['A','A','A'][r]}"
+        class="ml-1 bg-gray-600 text-white rounded px-1 py-0.5 w-8 text-xs font-mono uppercase">
+    </label>
+  `;
+  rotorSlotContainer.appendChild(div);
+}
+
+// State
+let rotorPositions = [0, 0, 0];
+
+function getConfig() {
+  const types = [0,1,2].map(r => document.getElementById(`rotor-type-${r}`).value);
+  const rings  = [0,1,2].map(r => parseInt(document.getElementById(`ring-${r}`).value)||1);
+  const starts = [0,1,2].map(r => {
+    const v = document.getElementById(`start-${r}`).value.toUpperCase();
+    return v.match(/[A-Z]/) ? charToIdx(v) : 0;
+  });
+  const reflector = document.getElementById('reflector').value;
+  return { types, rings, starts, reflector };
+}
+
+function parsePlugboard(str) {
+  const pairs = {};
+  const tokens = str.toUpperCase().match(/[A-Z][A-Z]/g) || [];
+  let count = 0;
+  for (const t of tokens) {
+    if (count >= 10) break;
+    const a = t[0], b = t[1];
+    if (a === b) continue;
+    if (pairs[a] || pairs[b]) continue;
+    pairs[a] = b;
+    pairs[b] = a;
+    count++;
+  }
+  return pairs;
+}
+
+function plugboardSwap(c, pairs) {
+  return pairs[c] || c;
+}
+
+function encryptChar(c, types, rings, positions, reflectorName, plugboard) {
+  c = c.toUpperCase();
+  if (!c.match(/[A-Z]/)) return c;
+
+  // Plugboard in
+  c = plugboardSwap(c, plugboard);
+  let idx = charToIdx(c);
+
+  // Through rotors right to left (indices 2,1,0)
+  for (let r = 2; r >= 0; r--) {
+    const rotor = ROTORS[types[r]];
+    const pos = positions[r];
+    const ring = rings[r] - 1;
+    // Forward
+    const shifted = ((idx + pos - ring + 26) % 26);
+    const wired = charToIdx(rotor.wiring[shifted]);
+    idx = ((wired - pos + ring + 26) % 26);
+  }
+
+  // Reflector
+  const ref = REFLECTORS[reflectorName];
+  idx = charToIdx(ref[idx]);
+
+  // Back through rotors left to right (indices 0,1,2)
+  for (let r = 0; r < 3; r++) {
+    const rotor = ROTORS[types[r]];
+    const pos = positions[r];
+    const ring = rings[r] - 1;
+    const shifted = ((idx + pos - ring + 26) % 26);
+    // Inverse wiring
+    let inv = 0;
+    for (let i = 0; i < 26; i++) {
+      if (charToIdx(rotor.wiring[i]) === shifted) { inv = i; break; }
+    }
+    idx = ((inv - pos + ring + 26) % 26);
+  }
+
+  // Plugboard out
+  c = plugboardSwap(idxToChar(idx), plugboard);
+  return c;
+}
+
+function stepRotors(types, positions) {
+  const pos = [...positions];
+  // Double-stepping anomaly
+  const n1 = charToIdx(ROTORS[types[1]].notch);
+  const n2 = charToIdx(ROTORS[types[2]].notch);
+  // If middle rotor is at notch position, step left and middle
+  if (pos[1] === n1) {
+    pos[0] = (pos[0] + 1) % 26;
+    pos[1] = (pos[1] + 1) % 26;
+  }
+  // If right rotor is at notch, step middle
+  if (pos[2] === n2) {
+    pos[1] = (pos[1] + 1) % 26;
+  }
+  // Always step right rotor
+  pos[2] = (pos[2] + 1) % 26;
+  return pos;
+}
+
+function updatePositionDisplay(positions) {
+  const d = document.getElementById('position-display');
+  d.innerHTML = '';
+  ['Left','Middle','Right'].forEach((label, i) => {
+    const span = document.createElement('div');
+    span.className = 'text-center';
+    span.innerHTML = `<div class="text-xs text-gray-400">${label}</div><div class="text-3xl">${idxToChar(positions[i])}</div>`;
+    d.appendChild(span);
+  });
+}
+
+function encrypt() {
+  const cfg = getConfig();
+  const plugboard = parsePlugboard(document.getElementById('plugboard-input').value);
+
+  // Reset positions to start
+  let positions = [...cfg.starts];
+
+  const input = document.getElementById('plaintext').value;
+  let output = '';
+  for (const c of input) {
+    if (c.match(/[A-Za-z]/)) {
+      positions = stepRotors(cfg.types, positions);
+      output += encryptChar(c, cfg.types, cfg.rings, positions, cfg.reflector, plugboard);
+    } else {
+      output += c;
+    }
+  }
+  document.getElementById('ciphertext').value = output;
+  rotorPositions = positions;
+  updatePositionDisplay(positions);
+}
+
+function updatePlugboardStatus() {
+  const pairs = parsePlugboard(document.getElementById('plugboard-input').value);
+  const count = Object.keys(pairs).length / 2;
+  const d = document.getElementById('plugboard-status');
+  if (count === 0) { d.textContent = 'No plugboard connections'; return; }
+  const pairStrs = [];
+  const seen = new Set();
+  for (const [a,b] of Object.entries(pairs)) {
+    if (!seen.has(a) && !seen.has(b)) { pairStrs.push(a+b); seen.add(a); seen.add(b); }
+  }
+  d.textContent = `${count} pairs active: ${pairStrs.join(' ')}`;
+}
+
+// Init display
+const initCfg = getConfig();
+updatePositionDisplay(initCfg.starts);
+
+// Events
+document.getElementById('plaintext').addEventListener('input', encrypt);
+document.getElementById('plugboard-input').addEventListener('input', () => { updatePlugboardStatus(); encrypt(); });
+document.getElementById('reflector').addEventListener('change', encrypt);
+document.querySelectorAll('[id^="rotor-type-"],[id^="ring-"],[id^="start-"]').forEach(el => {
+  el.addEventListener('change', () => { const cfg2 = getConfig(); updatePositionDisplay(cfg2.starts); encrypt(); });
+});
+document.getElementById('reset-btn').addEventListener('click', () => {
+  [0,1,2].forEach(r => document.getElementById(`start-${r}`).value = 'A');
+  const cfg2 = getConfig();
+  updatePositionDisplay(cfg2.starts);
+  encrypt();
+});
+</script>
+</body>
+</html>
